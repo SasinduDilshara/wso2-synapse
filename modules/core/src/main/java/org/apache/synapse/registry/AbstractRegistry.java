@@ -95,6 +95,12 @@ public abstract class AbstractRegistry implements Registry {
             // reload the properties since the cache is expired
             entry.setEntryProperties(getResourceProperties(entry.getKey()));
 
+            if (re == null) {
+                // Resource was deleted after being cached — clear the stale cached value
+                entry.setValue(null);
+                return null;
+            }
+
             if (re.getVersion() != Long.MIN_VALUE &&
                 re.getVersion() == entry.getVersion()) {
                 if (log.isDebugEnabled()) {
