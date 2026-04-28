@@ -523,9 +523,6 @@ public class ForEachMediatorV2 extends AbstractMediator implements ManagedLifecy
         if (collection instanceof JsonArray) {
             try {
                 log.debug("Updating original JSON array with iteration results");
-                //Read the complete JSON payload from the synCtx
-                String jsonPayload = JsonUtil.jsonPayloadToString(((Axis2MessageContext) originalMessageContext).getAxis2MessageContext());
-                DocumentContext parsedJsonPayload = JsonPath.parse(jsonPayload);
                 JsonArray jsonArray = (JsonArray) collection;
                 for (MessageContext synCtx : aggregate.getMessages()) {
                     Object prop = synCtx.getProperty(EIPConstants.MESSAGE_SEQUENCE + "." + id);
@@ -537,18 +534,34 @@ public class ForEachMediatorV2 extends AbstractMediator implements ManagedLifecy
                     }
                     jsonArray.set(Integer.parseInt(msgSequence[0]), jsonElement);
                 }
-                JsonPath jsonPath = getJsonPathFromExpression(this.collectionExpression.getExpression());
-                JsonElement jsonPayloadElement;
-                if (isWholeContent(jsonPath)) {
-                    jsonPayloadElement = jsonArray;
-                } else {
-                    jsonPayloadElement = parsedJsonPayload.set(jsonPath, jsonArray).json();
-                }
                 if (isCollectionReferencedByVariable(this.collectionExpression)) {
+                    // Collection came from a variable - update the variable, never touch the body.
                     String variableName = getVariableName(this.collectionExpression);
+                    JsonPath jsonPath = getJsonPathFromExpression(this.collectionExpression.getExpression());
+                    JsonElement jsonPayloadElement;
+                    if (isWholeContent(jsonPath)) {
+                        jsonPayloadElement = jsonArray;
+                    } else {
+                        // Re-read the full variable object and set the nested array back into it.
+                        Object varValue = originalMessageContext.getVariable(variableName);
+                        String varJson = varValue != null ? varValue.toString() : "{}";
+                        jsonPayloadElement = JsonPath.parse(varJson).set(jsonPath, jsonArray).json();
+                    }
                     originalMessageContext.setVariable(variableName, jsonPayloadElement);
                 } else {
-                    JsonUtil.getNewJsonPayload(((Axis2MessageContext) originalMessageContext).getAxis2MessageContext(),
+                    // Collection came from the message body - read and update the body.
+                    String jsonPayload = JsonUtil.jsonPayloadToString(
+                            ((Axis2MessageContext) originalMessageContext).getAxis2MessageContext());
+                    DocumentContext parsedJsonPayload = JsonPath.parse(jsonPayload);
+                    JsonPath jsonPath = getJsonPathFromExpression(this.collectionExpression.getExpression());
+                    JsonElement jsonPayloadElement;
+                    if (isWholeContent(jsonPath)) {
+                        jsonPayloadElement = jsonArray;
+                    } else {
+                        jsonPayloadElement = parsedJsonPayload.set(jsonPath, jsonArray).json();
+                    }
+                    JsonUtil.getNewJsonPayload(
+                            ((Axis2MessageContext) originalMessageContext).getAxis2MessageContext(),
                             jsonPayloadElement.toString(), true, true);
                 }
             } catch (AxisFault axisFault) {
