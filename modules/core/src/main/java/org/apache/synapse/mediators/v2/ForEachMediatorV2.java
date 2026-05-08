@@ -523,9 +523,6 @@ public class ForEachMediatorV2 extends AbstractMediator implements ManagedLifecy
         if (collection instanceof JsonArray) {
             try {
                 log.debug("Updating original JSON array with iteration results");
-                //Read the complete JSON payload from the synCtx
-                String jsonPayload = JsonUtil.jsonPayloadToString(((Axis2MessageContext) originalMessageContext).getAxis2MessageContext());
-                DocumentContext parsedJsonPayload = JsonPath.parse(jsonPayload);
                 JsonArray jsonArray = (JsonArray) collection;
                 for (MessageContext synCtx : aggregate.getMessages()) {
                     Object prop = synCtx.getProperty(EIPConstants.MESSAGE_SEQUENCE + "." + id);
@@ -538,16 +535,31 @@ public class ForEachMediatorV2 extends AbstractMediator implements ManagedLifecy
                     jsonArray.set(Integer.parseInt(msgSequence[0]), jsonElement);
                 }
                 JsonPath jsonPath = getJsonPathFromExpression(this.collectionExpression.getExpression());
-                JsonElement jsonPayloadElement;
-                if (isWholeContent(jsonPath)) {
-                    jsonPayloadElement = jsonArray;
-                } else {
-                    jsonPayloadElement = parsedJsonPayload.set(jsonPath, jsonArray).json();
-                }
                 if (isCollectionReferencedByVariable(this.collectionExpression)) {
+                    // Variable-backed collection: apply the JSONPath update against the variable's current JSON
+                    // value (NOT the message body, which may be empty/non-JSON and would otherwise throw
+                    // PathNotFoundException). Then write the updated value back to the same variable.
                     String variableName = getVariableName(this.collectionExpression);
-                    originalMessageContext.setVariable(variableName, jsonPayloadElement);
+                    if (isWholeContent(jsonPath)) {
+                        // The whole variable is the array — write the aggregated array directly.
+                        originalMessageContext.setVariable(variableName, jsonArray);
+                    } else {
+                        Object variableValue = originalMessageContext.getVariable(variableName);
+                        DocumentContext parsedVariable = JsonPath.parse(variableValue.toString());
+                        JsonElement updatedVariableValue = parsedVariable.set(jsonPath, jsonArray).json();
+                        originalMessageContext.setVariable(variableName, updatedVariableValue);
+                    }
                 } else {
+                    // Payload-backed collection: apply the JSONPath update against the message body,
+                    // then push the updated payload back via JsonUtil.
+                    String jsonPayload = JsonUtil.jsonPayloadToString(((Axis2MessageContext) originalMessageContext).getAxis2MessageContext());
+                    DocumentContext parsedJsonPayload = JsonPath.parse(jsonPayload);
+                    JsonElement jsonPayloadElement;
+                    if (isWholeContent(jsonPath)) {
+                        jsonPayloadElement = jsonArray;
+                    } else {
+                        jsonPayloadElement = parsedJsonPayload.set(jsonPath, jsonArray).json();
+                    }
                     JsonUtil.getNewJsonPayload(((Axis2MessageContext) originalMessageContext).getAxis2MessageContext(),
                             jsonPayloadElement.toString(), true, true);
                 }
